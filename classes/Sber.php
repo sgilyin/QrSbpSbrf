@@ -108,7 +108,6 @@ class Sber {
     }
 
     public static function notify($args) {
-        Log::debug(__FUNCTION__);
         switch ($args->operationType) {
             case 'PAY':
                 switch ($args->orderState) {
@@ -119,7 +118,6 @@ class Sber {
                         $payment->sum = $args->operationSum / 100;
                         $payment->date = preg_replace('/T\d{2}\:\d{2}\:\d{2}Z/', '', $args->operationDateTime);
                         $payment->comment = $args->orderId.'|'.$args->operationId;
-                        Log::debug(serialize($payment));
                         self::payBilling($payment);
                         break;
 
