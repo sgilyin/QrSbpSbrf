@@ -20,7 +20,7 @@ class Sber {
     }
 
     private static function oauth($scope) {
-        $url = 'https://api.sberbank.ru:8443/prod/tokens/v2/' . __FUNCTION__;
+        $url = 'https://mc.api.sberbank.ru/prod/tokens/v3/' . __FUNCTION__;
         $userpwd = sprintf('%s:%s', sbrfClientId, sbrfClientSecret);
         $headers[] = 'RqUID: ' . self::guidv4();
         $data['grant_type'] = 'client_credentials';
@@ -69,8 +69,13 @@ class Sber {
         $data['currency'] = '643';
         $data['description'] = $args->description;
         $data['sbp_member_id'] = '100000000111';
-        return cURL::exec(sbrfApiUrl.__FUNCTION__, json_encode($data),'POST',
+        $result = cURL::exec(sbrfApiUrl.__FUNCTION__, json_encode($data),'POST',
             self::headersGet($uid, 'create'), false, self::sslGet());
+        $decoded = json_decode($result);
+        $query = sprintf("INSERT INTO payments_qr VALUES ('%s', '%s', '%s', %s, '%s', '%s')", $decoded->order_id,
+            $decoded->order_number, $dateOrder, $data['order_sum'], $decoded->rq_tm, $decoded->order_state);
+        DB::query($query);
+        return $result;
     }
 
     public static function status($args) {
@@ -88,8 +93,13 @@ class Sber {
         $data['rq_uid'] = $uid;
         $data['rq_tm'] = date("Y-m-d\TH:i:s\Z");
         $data['order_id'] = $args->order_id;
-        return cURL::exec(sbrfApiUrl.__FUNCTION__, json_encode($data),'POST',
+        $result = cURL::exec(sbrfApiUrl.__FUNCTION__, json_encode($data),'POST',
             self::headersGet($uid, 'revoke'), false, self::sslGet());
+        $decoded = json_decode($result);
+        $query = sprintf("UPDATE payments_qr SET order_state='%s', operation_datetime='%s' WHERE order_id='%s'",
+            $decoded->order_state, $decoded->rq_tm, $decoded->order_id);
+        DB::query($query);
+        return $result;
     }
 
     public static function cancel($args) {
@@ -118,6 +128,9 @@ class Sber {
                         $payment->sum = $args->operationSum / 100;
                         $payment->date = preg_replace('/T\d{2}\:\d{2}\:\d{2}Z/', '', $args->operationDateTime);
                         $payment->comment = $args->orderId.'|'.$args->operationId;
+                        $query = sprintf("UPDATE payments_qr SET order_state='%s', operation_datetime='%s' WHERE order_id='%s'",
+                            $args->orderState, $args->operationDateTime, $args->orderId);
+                        DB::query($query);
                         self::payBilling($payment);
                         break;
 
@@ -128,6 +141,38 @@ class Sber {
 
             default:
                 break;
+        }
+    }
+
+    public static function cron($args){
+        $query = "SELECT order_id, operation_datetime, order_number, TIMESTAMPDIFF(MINUTE, operation_datetime, NOW()) delta FROM payments_qr WHERE NOT order_state IN ('PAID', 'REVOKED')";
+        $orders = DB::query($query);
+        while ($order = $orders->fetch_object()) {
+            $status = new stdClass();
+            $status->partner_order_number = $order->order_number;
+            $checkStatus = json_decode(self::status($status));
+            switch ($checkStatus->order_state) {
+                case 'PAID':
+                    $notify = new stdClass();
+                    $notify->operationType = 'PAY';
+                    $notify->orderState = $checkStatus->order_state;
+                    $notify->partnerOrderNumber = $order->order_number;
+                    $notify->operationSum = $checkStatus->order_operation_params->operation_sum;
+                    $notify->operationDateTime = $checkStatus->order_operation_params->operation_date_time;
+                    $notify->operationId = $checkStatus->order_operation_params->operation_id;
+                    $notify->orderId = $checkStatus->order_id;
+                    self::notify($notify);
+                    break;
+
+                default:
+                    var_dump($order->delta);
+                    if (intval($order->delta) > 30) {
+                        $revocation = new stdClass();
+                        $revocation->order_id = $order->order_id;
+                        self::revocation($revocation);
+                    }
+                    break;
+            }
         }
     }
 }
