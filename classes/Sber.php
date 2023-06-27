@@ -157,9 +157,9 @@ class Sber {
                     $notify->operationType = 'PAY';
                     $notify->orderState = $checkStatus->order_state;
                     $notify->partnerOrderNumber = $order->order_number;
-                    $notify->operationSum = $checkStatus->order_operation_params->operation_sum;
-                    $notify->operationDateTime = $checkStatus->order_operation_params->operation_date_time;
-                    $notify->operationId = $checkStatus->order_operation_params->operation_id;
+                    $notify->operationSum = $checkStatus->order_operation_params[0]->operation_sum;
+                    $notify->operationDateTime = $checkStatus->order_operation_params[0]->operation_date_time;
+                    $notify->operationId = $checkStatus->order_operation_params[0]->operation_id;
                     $notify->orderId = $checkStatus->order_id;
                     self::notify($notify);
                     break;
